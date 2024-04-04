@@ -25,6 +25,7 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
         from azure.ai.documentintelligence import DocumentIntelligenceClient
         from azure.ai.documentintelligence.models import DocumentAnalysisFeature
         from azure.core.credentials import AzureKeyCredential
+        from azure.ai.documentintelligence.models import ContentFormat
 
         kwargs = {}
         if api_version is not None:
@@ -71,17 +72,42 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             )
             yield d
     
-    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
-        for p in result.pages:
-            content = " ".join([line.content for line in p.lines])
+    
+    # def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
+    #     for p in result.pages:
+    #         content = "".join([line.content for line in p.lines])
 
-            d = Document(
-                page_content=content,
-                metadata={
-                    "page": p.page_number,
-                },
-            )
-            yield d
+    #         d = Document(
+    #             page_content=content,
+    #             metadata={"page": p.page_number},
+    #         )
+    #         yield d
+    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
+         # To print the first 100 lines of the content if 'content' attribute is available
+        # if hasattr(result, 'content'):
+        #     content_lines = result.content.split('\n')
+        #     i = 0
+        #     for line in content_lines[:500]:
+        #         print(f"line {i}: {line}")
+        #         i += 1
+        i = 0
+        for p in result.pages[:2]:
+            print(f"Page {i} lines: {p.lines}")
+           
+            j = 0
+            for line in p.lines[:50]:
+                print(f"Line {j} content: {line.content}")
+                j += 1
+            i += 1
+        # Join lines to form content, this might need adjustment based on actual structure
+            # content = "\n".join([line.content for line in p.lines]) 
+            # Create a Document object for each page
+            # d = Document(
+            #     page_content=content,
+            #     metadata={"page": p.page_number},
+            # )
+            # yield d
+    
 
     def _generate_docs_single(self, result: Any) -> Iterator[Document]:
         yield Document(page_content=result.content, metadata={})
@@ -94,7 +120,7 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
                 self.api_model,
                 file_obj,
                 content_type="application/octet-stream",
-                output_content_format="markdown" if self.mode in ["markdown", "markdown-page"] else "text",
+                output_content_format=ContentFormat.MARKDOWN if self.mode in ["markdown", "markdown-page"] else ContentFormat.TEXT,
             )
             result = poller.result()
 
