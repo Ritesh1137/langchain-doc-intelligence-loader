@@ -15,7 +15,7 @@ loader = AzureAIDocumentIntelligenceLoader(
     api_key=key, 
     url_path =url_path, 
     api_model="prebuilt-layout",
-    mode="markdown",
+    mode="markdown-page",
     # mode="page"
 )
 
