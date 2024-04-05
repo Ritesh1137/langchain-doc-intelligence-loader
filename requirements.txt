@@ -4,3 +4,4 @@ langchain-community
 azure-ai-documentintelligence
 markdown
 beautifulsoup4
+openai

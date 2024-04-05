@@ -9,6 +9,13 @@ from langchain_community.document_loaders.blob_loaders import Blob
 import markdown
 from bs4 import BeautifulSoup
 import re
+import openai
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 
 logger = logging.getLogger(__name__) 
 
@@ -92,30 +99,41 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
     
     @staticmethod
     def extract_tables_with_captions(md_content):
+        '''
+        Extracts tables and their immediate captions from a markdown string.
+
+        This function identifies tables in a markdown-formatted string based on the
+        presence of "|" characters denoting table rows. It assumes that a caption,
+        if present, follows immediately after the table. The function returns a list
+        of dictionaries, each containing the 'content' of a table and its 'caption'.
+        If a table does not have a caption, the 'caption' field is set to None.
+
+        Parameters:
+        - md_content (str): A string containing markdown content.
+
+        Returns:
+        - List[dict]: A list where each element is a dictionary with keys 'content'
+        (the markdown table as a string) and 'caption' (the text immediately following
+        the table, or None if there is no caption).
+        '''
         lines = md_content.split('\n')
         tables = []
         current_table = []
         in_table = False
         for i, line in enumerate(lines):
-            if '|' in line:  # Check if the line might be part of a table
-                if not in_table:  # Starting a new table
+            if '|' in line:  
+                if not in_table:  
                     in_table = True
                     current_table = [line]
-                else:  # Continuing an existing table
+                else:  
                     current_table.append(line)
             else:
-                if in_table:  # End of a table, check for caption
-                    in_table = False
-                    # Assume the line immediately after a table could be a caption, 
-                    # especially if it's not empty and not another markdown table start
-                    potential_caption = lines[i + 1] if i + 1 < len(lines) else ""
-                    # Basic heuristic to decide if the following line is a caption:
-                    # - It shouldn't contain table syntax.
-                    # - It should be a non-empty line.
-                    # - Adjust based on your markdown patterns.
+                if in_table:  
+                    in_table = False                    
+                    potential_caption = lines[i + 1] if i + 1 < len(lines) else ""                   
                     if potential_caption and not potential_caption.startswith('|'):
                         caption = potential_caption.strip()
-                        i += 1  # Skip over the caption line in the next iteration
+                        i += 1  
                     else:
                         caption = None
                     tables.append({'content': "\n".join(current_table), 'caption': caption})
@@ -126,6 +144,30 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             tables.append({'content': "\n".join(current_table), 'caption': None})
 
         return tables
+    
+    @staticmethod
+    def summarize_table(table_content, caption=None):
+        prompt = f"Table Content:\n{table_content}"
+        if caption:
+            prompt += f"\n\nCaption: {caption}"
+        prompt += "\n\nSummarize the key information in this table in 5-6 sentences:"
+
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful table summarization assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=150,
+            n=1,
+            stop=None,
+            temperature=0,
+            )
+        # summary = response.choices[0].text.strip()
+        summary = response
+        # summaries = [completion.choices[0].message.content for completion in response]
+
+        return summary
 
 
     def _generate_docs_page(self, result: Any) -> Iterator[Document]:
@@ -140,11 +182,31 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             )
             yield d
     
-    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:      
+    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
+        table_summaries = []      
         final_content = self.to_ascii(result.content)
         
         table_count = self.count_markdown_tables(final_content)
-        yield Document(page_content=final_content, metadata={"table_count": table_count})
+
+        table_data = self.extract_tables_with_captions(final_content)
+        for table in table_data:
+            table_content = table["content"]
+            caption = table["caption"]
+            summary = self.summarize_table(table_content, caption)
+            # chat_completion_response = self.summarize_table(table_content, caption)
+            table_summaries.append(summary)
+
+            # for completion in chat_completion_response:
+            #     summary_text = completion.choices[0].message.content
+            #     table_summaries.append(summary_text)
+
+        # combined_summaries = " ".join(table_summaries)
+        yield Document(
+            page_content=final_content,
+            metadata={
+                "table_count": table_count,
+                "table_summaries": table_summaries
+            })
 
 
     def _generate_docs_single(self, result: Any) -> Iterator[Document]:
