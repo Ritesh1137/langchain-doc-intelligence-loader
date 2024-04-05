@@ -6,6 +6,10 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders.base import BaseBlobParser
 from langchain_community.document_loaders.blob_loaders import Blob
 
+import markdown
+from bs4 import BeautifulSoup
+import re
+
 logger = logging.getLogger(__name__) 
 
 
@@ -59,6 +63,70 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
         self.mode = mode
         assert self.mode in ["single", "page", "markdown", "markdown-page"]
 
+    @staticmethod
+    def to_ascii(text):
+        return text.encode('ascii', 'replace').decode()
+    
+    @staticmethod
+    def count_markdown_tables(md_content):
+        lines = md_content.split('\n')
+        table_count = 0
+        found_separator = False
+
+        for line in lines:
+            trimmed_line = line.strip()
+            if '|' in trimmed_line:
+                # Split the line by pipe characters and strip whitespace from each segment
+                segments = [seg.strip() for seg in trimmed_line.split('|') if seg.strip()]
+                # Check if all segments of the line are either dashes (possibly with colons for alignment) or empty
+                if all(s == '-' * len(s) or s.replace(':', '') == '-' * len(s.replace(':', '')) for s in segments):
+                    if not found_separator:  # This checks if it's the first separator line of a table
+                        table_count += 1
+                        found_separator = True
+                else:
+                    found_separator = False  # Not a separator line, reset flag
+            else:
+                found_separator = False  # Line without pipes, reset flag
+
+        return table_count
+    
+    @staticmethod
+    def extract_tables_with_captions(md_content):
+        lines = md_content.split('\n')
+        tables = []
+        current_table = []
+        in_table = False
+        for i, line in enumerate(lines):
+            if '|' in line:  # Check if the line might be part of a table
+                if not in_table:  # Starting a new table
+                    in_table = True
+                    current_table = [line]
+                else:  # Continuing an existing table
+                    current_table.append(line)
+            else:
+                if in_table:  # End of a table, check for caption
+                    in_table = False
+                    # Assume the line immediately after a table could be a caption, 
+                    # especially if it's not empty and not another markdown table start
+                    potential_caption = lines[i + 1] if i + 1 < len(lines) else ""
+                    # Basic heuristic to decide if the following line is a caption:
+                    # - It shouldn't contain table syntax.
+                    # - It should be a non-empty line.
+                    # - Adjust based on your markdown patterns.
+                    if potential_caption and not potential_caption.startswith('|'):
+                        caption = potential_caption.strip()
+                        i += 1  # Skip over the caption line in the next iteration
+                    else:
+                        caption = None
+                    tables.append({'content': "\n".join(current_table), 'caption': caption})
+                    current_table = []
+
+        # Handle the case where a document ends with a table
+        if in_table:
+            tables.append({'content': "\n".join(current_table), 'caption': None})
+
+        return tables
+
 
     def _generate_docs_page(self, result: Any) -> Iterator[Document]:
         for p in result.pages:
@@ -72,42 +140,12 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             )
             yield d
     
-    
-    # def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
-    #     for p in result.pages:
-    #         content = "".join([line.content for line in p.lines])
+    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:      
+        final_content = self.to_ascii(result.content)
+        
+        table_count = self.count_markdown_tables(final_content)
+        yield Document(page_content=final_content, metadata={"table_count": table_count})
 
-    #         d = Document(
-    #             page_content=content,
-    #             metadata={"page": p.page_number},
-    #         )
-    #         yield d
-    def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
-         # To print the first 100 lines of the content if 'content' attribute is available
-        # if hasattr(result, 'content'):
-        #     content_lines = result.content.split('\n')
-        #     i = 0
-        #     for line in content_lines[:500]:
-        #         print(f"line {i}: {line}")
-        #         i += 1
-        i = 0
-        for p in result.pages[:2]:
-            print(f"Page {i} lines: {p.lines}")
-           
-            j = 0
-            for line in p.lines[:50]:
-                print(f"Line {j} content: {line.content}")
-                j += 1
-            i += 1
-        # Join lines to form content, this might need adjustment based on actual structure
-            # content = "\n".join([line.content for line in p.lines]) 
-            # Create a Document object for each page
-            # d = Document(
-            #     page_content=content,
-            #     metadata={"page": p.page_number},
-            # )
-            # yield d
-    
 
     def _generate_docs_single(self, result: Any) -> Iterator[Document]:
         yield Document(page_content=result.content, metadata={})

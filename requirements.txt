@@ -2,5 +2,5 @@ langchain
 python-dotenv
 langchain-community
 azure-ai-documentintelligence
-
-
+markdown
+beautifulsoup4

@@ -27,9 +27,9 @@ documents = loader.load()
 # print(documents)
 
 # METHOD 2
-# i = 1
+i = 1
 
-# for document in documents:
-#     print(f"Page Content {i}: {document.page_content}")
-#     print(f"Metadata {i}: {document.metadata}")
-#     i = i + 1
+for document in documents:
+    print(f"Page Content {i}: {document.page_content}")
+    print(f"Metadata {i}: {document.metadata}")
+    i = i + 1
