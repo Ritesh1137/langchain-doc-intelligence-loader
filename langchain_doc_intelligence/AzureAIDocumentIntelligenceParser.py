@@ -12,6 +12,7 @@ import re
 import openai
 import os
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -72,30 +73,7 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
 
     @staticmethod
     def to_ascii(text):
-        return text.encode('ascii', 'replace').decode()
-    
-    @staticmethod
-    def count_markdown_tables(md_content):
-        lines = md_content.split('\n')
-        table_count = 0
-        found_separator = False
-
-        for line in lines:
-            trimmed_line = line.strip()
-            if '|' in trimmed_line:
-                # Split the line by pipe characters and strip whitespace from each segment
-                segments = [seg.strip() for seg in trimmed_line.split('|') if seg.strip()]
-                # Check if all segments of the line are either dashes (possibly with colons for alignment) or empty
-                if all(s == '-' * len(s) or s.replace(':', '') == '-' * len(s.replace(':', '')) for s in segments):
-                    if not found_separator:  # This checks if it's the first separator line of a table
-                        table_count += 1
-                        found_separator = True
-                else:
-                    found_separator = False  # Not a separator line, reset flag
-            else:
-                found_separator = False  # Line without pipes, reset flag
-
-        return table_count
+        return text.encode('ascii', 'replace').decode()   
     
     @staticmethod
     def extract_tables_with_captions(md_content):
@@ -147,26 +125,41 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
     
     @staticmethod
     def summarize_table(table_content, caption=None):
-        prompt = f"Table Content:\n{table_content}"
-        if caption:
-            prompt += f"\n\nCaption: {caption}"
-        prompt += "\n\nSummarize the key information in this table in 5-6 sentences:"
 
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
+        intro = """
+        This table, formatted in markdown, is extracted from a document and 
+        can contain a variety of data types including numbers, text, sentences, 
+        or any other kind of data.The table is intended to present information
+        relevant to the document's overall context or specific sections within."""
+        if caption:
+            intro += f" The table's caption, '{caption},' provides additional context."        
+       
+        instructions = """
+        IMPORTANT: Please ensure your analysis remains strictly confined ONLY to the data provided in the table. Do not refer to or assume any external context.
+        Please analyze and summarize the key information presented in the table below. Your summary should:
+        - Identify and highlight significant trends, patterns or values.
+        - Note any particularly relevant data points, whether they are numerical values, text descriptions, or key sentences.
+        - Make comparisons and contrasts between different columns or rows as necessary, elucidating any notable differences or similarities.
+        - Directly interpret the data presented, focusing exclusively on the information within the table without referring to or assuming additional external context.
+        The summary should be short, articulate, informative, and span 5-8 sentences, aiming for a comprehensive overview that accommodates the table's content.        
+        """
+        
+        prompt = f"{intro}\n\nTable Content:\n{table_content}{instructions}"
+
+        responses = openai.chat.completions.create(
+            model="gpt-3.5-turbo-0125",
+            # model="gpt-4-0125-preview",
             messages=[
                 {"role": "system", "content": "You are a helpful table summarization assistant."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=150,
+            max_tokens=200,
             n=1,
             stop=None,
             temperature=0,
             )
-        # summary = response.choices[0].text.strip()
-        summary = response
-        # summaries = [completion.choices[0].message.content for completion in response]
-
+        summaries = [choice.message.content for choice in responses.choices]        
+        summary = " ".join(summaries)
         return summary
 
 
@@ -184,27 +177,18 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
     
     def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
         table_summaries = []      
-        final_content = self.to_ascii(result.content)
-        
-        table_count = self.count_markdown_tables(final_content)
+        final_content = self.to_ascii(result.content)       
 
         table_data = self.extract_tables_with_captions(final_content)
         for table in table_data:
             table_content = table["content"]
             caption = table["caption"]
             summary = self.summarize_table(table_content, caption)
-            # chat_completion_response = self.summarize_table(table_content, caption)
             table_summaries.append(summary)
 
-            # for completion in chat_completion_response:
-            #     summary_text = completion.choices[0].message.content
-            #     table_summaries.append(summary_text)
-
-        # combined_summaries = " ".join(table_summaries)
         yield Document(
             page_content=final_content,
             metadata={
-                "table_count": table_count,
                 "table_summaries": table_summaries
             })
 
