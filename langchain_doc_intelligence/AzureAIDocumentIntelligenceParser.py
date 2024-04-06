@@ -6,13 +6,9 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders.base import BaseBlobParser
 from langchain_community.document_loaders.blob_loaders import Blob
 
-import markdown
-from bs4 import BeautifulSoup
-import re
 import openai
 import os
 from dotenv import load_dotenv
-import json
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -156,7 +152,7 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             max_tokens=200,
             n=1,
             stop=None,
-            temperature=0,
+            temperature=0.0,
             )
         summaries = [choice.message.content for choice in responses.choices]        
         summary = " ".join(summaries)
