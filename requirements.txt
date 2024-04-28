@@ -2,6 +2,6 @@ langchain
 python-dotenv
 langchain-community
 azure-ai-documentintelligence
-markdown
-beautifulsoup4
 openai
+langchain_openai
+qdrant-client
