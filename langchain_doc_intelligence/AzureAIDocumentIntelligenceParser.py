@@ -69,55 +69,69 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
 
     @staticmethod
     def to_ascii(text):
-        return text.encode('ascii', 'replace').decode()   
-    
+        return text.encode('ascii', 'replace').decode()       
+           
     @staticmethod
     def extract_tables_with_captions(md_content):
-        '''
-        Extracts tables and their immediate captions from a markdown string.
-
-        This function identifies tables in a markdown-formatted string based on the
-        presence of "|" characters denoting table rows. It assumes that a caption,
-        if present, follows immediately after the table. The function returns a list
-        of dictionaries, each containing the 'content' of a table and its 'caption'.
-        If a table does not have a caption, the 'caption' field is set to None.
-
-        Parameters:
-        - md_content (str): A string containing markdown content.
-
-        Returns:
-        - List[dict]: A list where each element is a dictionary with keys 'content'
-        (the markdown table as a string) and 'caption' (the text immediately following
-        the table, or None if there is no caption).
-        '''
         lines = md_content.split('\n')
         tables = []
         current_table = []
         in_table = False
+        header_stack = []
+        current_metadata = {}
+
         for i, line in enumerate(lines):
-            if '|' in line:  
-                if not in_table:  
+            stripped_line = line.strip()
+
+            # Header tracking
+            if stripped_line.startswith('#'):
+                header_level = stripped_line.count('#')
+                header = stripped_line[header_level:].strip()
+                header_stack = header_stack[:header_level]  # Reset stack at current level
+                current_metadata = {f'level_{level}': name for level, name in header_stack}
+                current_metadata['current_header'] = header  # Update current metadata
+                header_stack.append((header_level, header))  # Push current header to stack
+
+            # Table extraction
+            if '|' in line:
+                if not in_table:
                     in_table = True
                     current_table = [line]
-                else:  
+                else:
                     current_table.append(line)
             else:
-                if in_table:  
-                    in_table = False                    
-                    potential_caption = lines[i + 1] if i + 1 < len(lines) else ""                   
+                if in_table:
+                    in_table = False
+                    potential_caption = lines[i + 1] if i + 1 < len(lines) else ""
                     if potential_caption and not potential_caption.startswith('|'):
                         caption = potential_caption.strip()
-                        i += 1  
+                        i += 1
                     else:
                         caption = None
-                    tables.append({'content': "\n".join(current_table), 'caption': caption})
+                    # Add table with metadata
+                    tables.append({
+                        'content': "\n".join(current_table),
+                        'caption': caption,
+                        # 'section': current_metadata.get(1, None),
+                        # 'subsection': current_metadata.get(2, None)                        
+                        'section': current_metadata.get('level_1'),  
+                        'subsection': current_metadata.get('level_2') 
+                    })
                     current_table = []
 
         # Handle the case where a document ends with a table
         if in_table:
-            tables.append({'content': "\n".join(current_table), 'caption': None})
+            tables.append({
+                'content': "\n".join(current_table),
+                'caption': None,
+                # 'section': current_metadata.get(1, None),
+                # 'subsection': current_metadata.get(2, None)
+                'section': current_metadata.get('level_1'),  
+                'subsection': current_metadata.get('level_2') 
+            })
 
         return tables
+
     
     @staticmethod
     def summarize_table(table_content, caption=None):
@@ -143,8 +157,8 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
         prompt = f"{intro}\n\nTable Content:\n{table_content}{instructions}"
 
         responses = openai.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            # model="gpt-4-0125-preview",
+            # model="gpt-3.5-turbo-0125",
+            model="gpt-4-0125-preview",
             messages=[
                 {"role": "system", "content": "You are a helpful table summarization assistant."},
                 {"role": "user", "content": prompt}
@@ -172,21 +186,36 @@ class AzureAIDocumentIntelligenceParser(BaseBlobParser):
             yield d
     
     def _generate_docs_markdown_page(self, result: Any) -> Iterator[Document]:
-        table_summaries = []      
-        final_content = self.to_ascii(result.content)       
-
+        final_content = self.to_ascii(result.content)
         table_data = self.extract_tables_with_captions(final_content)
+        enriched_summaries = []
+
+        # Process each table to generate summaries and maintain associated metadata
         for table in table_data:
             table_content = table["content"]
             caption = table["caption"]
-            summary = self.summarize_table(table_content, caption)
-            table_summaries.append(summary)
+            section = table["section"]
+            subsection = table["subsection"]
 
+            # Generate the summary for the current table
+            summary = self.summarize_table(table_content, caption)
+
+            # Append the summary with its metadata
+            enriched_summaries.append({
+                'summary': summary,
+                'caption': caption,
+                'section': section,
+                'subsection': subsection,
+                'table_summary': True
+            })
+
+        # Yield a Document that includes all summaries with their metadata
         yield Document(
             page_content=final_content,
             metadata={
-                "table_summaries": table_summaries
-            })
+                'table_summaries': enriched_summaries
+            }
+        )
 
 
     def _generate_docs_single(self, result: Any) -> Iterator[Document]:
